@@ -3,6 +3,7 @@ from __future__ import absolute_import, unicode_literals, print_function
 import sqlite3
 import sys
 
+
 def create_db(file_pth):
     """ Create an empty SQLite database for library spectra.
 
@@ -178,7 +179,7 @@ def insert_query_m(data, table, conn, columns=None, db_type='mysql'):
         db_type (str): If "sqlite" or "mysql"
 
     """
-    # if length of data is very large we need to break into chunks the insert_query_m is then used recursively untill
+    # if length of data is very large we need to break into chunks the insert_query_m is then used recursively until
     # all data has been inserted
     if len(data) > 10000:
         _chunk_query(data, 10000, columns, conn, table, db_type)
@@ -203,6 +204,7 @@ def insert_query_m(data, table, conn, columns=None, db_type='mysql'):
         cursor = conn.cursor()
         cursor.executemany(stmt, data)
         conn.commit()
+
 
 def _chunk_query(l, n, cn, conn, table, db_type):
     """ Call for inserting SQL query in chunks based on n rows
@@ -234,10 +236,8 @@ def _make_sql_compatible(ll):
             if not i:
                 new_l = new_l + (None,)
             else:
-
                 if isinstance(i, str):
                     if sys.version_info < (3, 0):
-
                         val = i.decode('utf8').encode('ascii', errors='ignore')
                     else:
                         # in py3 strings should be ok...
