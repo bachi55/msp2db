@@ -7,6 +7,7 @@ import pubchempy as pcp
 import csv
 import uuid
 import six
+import sqlite3
 from .re import get_compound_regex, get_meta_regex
 from .db import get_connection, insert_query_m, _make_sql_compatible, db_dict
 from .utils import get_precursor_mz, line_count, get_blank_dict
@@ -63,6 +64,8 @@ class LibraryData(object):
         compound_lookup (boolean): Include compound lookup
         celery_obj (boolean): If using Django a Celery task object can be used to keep track on ongoing tasks
                               [default False]
+        local_pubchem_db_path (str): Path to the local pubchem SQLite DB. If None, no local PubChem DB available
+                                     [default None]
 
     Returns:
         LibraryData object
@@ -70,7 +73,7 @@ class LibraryData(object):
     def __init__(self, msp_pth, db_pth=None,
                  mslevel=None, polarity=None, source='unknown', db_type='sqlite', password=None, user=None,
                  mysql_db_name=None, chunk=200, schema='mona', user_meta_regex=None, user_compound_regex=None,
-                 compound_lookup=True, celery_obj=False):
+                 compound_lookup=True, celery_obj=False, local_pubchem_db_path=None):
 
         # get the database connection (either sqlite, mysql or Django mysql)
         conn = get_connection(db_type, db_pth, user, password, mysql_db_name)
@@ -94,6 +97,12 @@ class LibraryData(object):
         self.mslevel = mslevel
         self.polarity = polarity
         self.other_names = []
+
+        # Local PubChem SQLite DB
+        if local_pubchem_db_path:
+            self.local_pubchem_db_conn = get_connection("sqlite", local_pubchem_db_path)
+        else:
+            self.local_pubchem_db_conn = None
 
         # Either get standard regexs or the user provided regexes
         if user_meta_regex:
@@ -164,9 +173,7 @@ class LibraryData(object):
             else:
                 self.current_id_spectra_annotation = 1
 
-
-    def _parse_files(self, msp_pth, chunk, db_type, celery_obj=False,
-                     compound_lookup=True):
+    def _parse_files(self, msp_pth, chunk, db_type, celery_obj=False, compound_lookup=True):
         """Parse the MSP files and insert into database
 
         Args:
@@ -341,7 +348,11 @@ class LibraryData(object):
         self.compound_info['other_names'] = ' <#> '.join(other_name_l)
 
         if not self.compound_info['inchikey_id']:
-            self._set_inchi_pcc(self.compound_info['pubchem_id'], 'cid', 0)
+            # First try to find the PubChem ID in the local DB
+            self._set_inchi_pcc(self.compound_info['pubchem_id'], 'cid', 0, from_local_db=True)
+
+        if not self.compound_info['inchikey_id']:
+            self._set_inchi_pcc(self.compound_info['pubchem_id'], 'cid', 0, from_local_db=False)
 
         if not self.compound_info['inchikey_id']:
             self._set_inchi_pcc(self.compound_info['smiles'], 'smiles', 0)
@@ -443,29 +454,34 @@ class LibraryData(object):
 
         self.current_id_spectra += 1
 
-    def _set_inchi_pcc(self, in_str, pcp_type, elem):
+    def _set_inchi_pcc(self, in_str, pcp_type, elem, from_local_db=False):
         """Check pubchem compounds via API for both an inchikey and any available compound details
         """
         if not in_str:
             return 0
 
-        try:
-            pccs = pcp.get_compounds(in_str, pcp_type)
-        except pcp.BadRequestError as e:
-            print(e)
-            return 0
-        except pcp.TimeoutError as e:
-            print(e)
-            return 0
-        except pcp.ServerError as e:
-            print(e)
-            return 0
-        except URLError as e:
-            print(e)
-            return 0
-        except BadStatusLine as e:
-            print(e)
-            return 0
+        if from_local_db:
+            self.local_pubchem_db_conn.execute(
+                "SELECT iupac_inchikey, cid, molecular_formula, monoisotopic_mass, smiles FROM info"
+            )
+        else:
+            try:
+                pccs = pcp.get_compounds(in_str, pcp_type)
+            except pcp.BadRequestError as e:
+                print(e)
+                return 0
+            except pcp.TimeoutError as e:
+                print(e)
+                return 0
+            except pcp.ServerError as e:
+                print(e)
+                return 0
+            except URLError as e:
+                print(e)
+                return 0
+            except BadStatusLine as e:
+                print(e)
+                return 0
 
         if pccs:
             pcc = pccs[elem]
